@@ -118,8 +118,7 @@
         color-space="sRGB"
         renderer="colorManagement: true, physicallyCorrectLights"
         vr-mode-ui="enabled: false"
-        device-orientation-permission-ui="enabled: false"
-        physics="gravity: -9.8; debug: false;">
+        device-orientation-permission-ui="enabled: false">
         
         <!-- Camera -->
         <a-camera 
@@ -171,8 +170,7 @@
                     position="0 0.15 0"
                     radius="0.14"
                     height="0.15"
-                    opacity="0"
-                    static-body>
+                    opacity="0">
                 </a-cylinder>
             </a-entity>
             
@@ -200,8 +198,7 @@
                     position="0 0.15 0"
                     radius="0.14"
                     height="0.15"
-                    opacity="0"
-                    static-body>
+                    opacity="0">
                 </a-cylinder>
             </a-entity>
             
@@ -229,8 +226,7 @@
                     position="0 0.15 0"
                     radius="0.14"
                     height="0.15"
-                    opacity="0"
-                    static-body>
+                    opacity="0">
                 </a-cylinder>
             </a-entity>
             
@@ -319,39 +315,31 @@
             
             const ball = document.createElement('a-sphere');
             
-            // Ball properties - BIGGER and BRIGHTER untuk terlihat jelas
-            ball.setAttribute('radius', '0.12'); // Lebih besar lagi
-            ball.setAttribute('color', '#FFD700'); // Gold/kuning terang
+            // Ball properties - NO PHYSICS, pure visual
+            ball.setAttribute('radius', '0.12');
+            ball.setAttribute('color', '#FFD700');
             ball.setAttribute('shadow', 'cast: true');
             ball.setAttribute('metalness', '0.5');
             ball.setAttribute('roughness', '0.5');
             ball.setAttribute('segments-height', '16');
             ball.setAttribute('segments-width', '16');
-            
-            // Add glow effect
             ball.setAttribute('material', 'color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.5');
             
-            // PENTING: Posisi di DEPAN KAMERA - lebih dekat dan lebih bawah
-            // x: 0 (tengah horizontal)
-            // y: -0.15 (sedikit di bawah center)
-            // z: -0.3 (sangat dekat ke kamera agar terlihat)
+            // Position in front of camera
             ball.setAttribute('position', '0 -0.15 -0.3');
             
-            // NO physics initially
             ball.setAttribute('id', 'active-ball');
             ball.classList.add('draggable-ball');
             
-            // Add to CAMERA
+            // Add to CAMERA - NO PHYSICS AT ALL
             camera.appendChild(ball);
-            console.log('✅ Ball spawned at CAMERA position (0, -0.15, -0.3)');
-            console.log('🎨 Ball color: GOLD with glow effect');
-            console.log('📏 Ball radius: 0.12 (large and visible)');
+            console.log('✅ Ball spawned (NO PHYSICS - pure animation)');
             
             currentBall = ball;
             return ball;
         }
         
-        // Throw ball with physics
+        // Throw ball with ANIMATION (no physics - simpler and works!)
         function throwBall(velocity) {
             if (!currentBall || !currentBall.parentNode) {
                 console.log('⚠️ No ball to throw');
@@ -360,17 +348,15 @@
             
             console.log('🚀 Throwing ball with velocity:', velocity.toFixed(2));
             
-            // Get ball's current WORLD position before moving
+            // Get ball's current WORLD position
             const ballWorldPos = new THREE.Vector3();
             currentBall.object3D.getWorldPosition(ballWorldPos);
             
-            // Get camera rotation to calculate throw direction
             const camera = document.querySelector('a-camera');
-            const cameraRot = camera.object3D.rotation;
             
             console.log('📍 Ball world position:', ballWorldPos.x.toFixed(2), ballWorldPos.y.toFixed(2), ballWorldPos.z.toFixed(2));
             
-            // Remove from camera safely
+            // Remove from camera
             const parent = currentBall.parentNode;
             if (parent) {
                 parent.removeChild(currentBall);
@@ -383,109 +369,116 @@
             // Set world position
             currentBall.object3D.position.copy(ballWorldPos);
             
-            // Wait a bit for object to be in scene, then add physics
+            // Calculate throw parameters
+            const powerMultiplier = 0.004;
+            const minPower = 1.5;
+            const power = Math.max(minPower, velocity * powerMultiplier);
+            
+            // Get forward direction
+            const forwardVector = new THREE.Vector3(0, 0, -1);
+            forwardVector.applyQuaternion(camera.object3D.quaternion);
+            
+            // Calculate target position (parabolic arc)
+            const throwDistance = 2.5;
+            const throwHeight = power + 1.0;
+            
+            const targetX = ballWorldPos.x + (forwardVector.x * throwDistance);
+            const targetY = ballWorldPos.y + throwHeight;
+            const targetZ = ballWorldPos.z + (forwardVector.z * throwDistance);
+            
+            // Mid-point for arc (higher)
+            const midX = ballWorldPos.x + (forwardVector.x * throwDistance * 0.5);
+            const midY = ballWorldPos.y + throwHeight + 0.5;
+            const midZ = ballWorldPos.z + (forwardVector.z * throwDistance * 0.5);
+            
+            console.log('🎯 Throw arc: Start', ballWorldPos.y.toFixed(2), '→ Peak', midY.toFixed(2), '→ Target', targetY.toFixed(2));
+            
+            // Animate with keyframes (parabolic arc)
+            currentBall.setAttribute('animation__throw', {
+                property: 'position',
+                to: `${targetX} ${targetY} ${targetZ}`,
+                dur: 1000,
+                easing: 'easeOutQuad'
+            });
+            
+            // Add falling animation after peak
             setTimeout(() => {
+                if (currentBall && currentBall.parentNode) {
+                    currentBall.setAttribute('animation__fall', {
+                        property: 'position',
+                        to: `${targetX} ${targetY - 1.5} ${targetZ}`,
+                        dur: 500,
+                        easing: 'easeInQuad'
+                    });
+                }
+            }, 500);
+            
+            // Add rotation for visual effect
+            currentBall.setAttribute('animation__rotate', {
+                property: 'rotation',
+                to: '360 360 360',
+                dur: 1500,
+                easing: 'linear'
+            });
+            
+            console.log('✅ Ball animated with parabolic arc');
+            
+            // Check collision manually with goal zones
+            const checkCollision = setInterval(() => {
                 if (!currentBall || !currentBall.parentNode) {
-                    console.error('❌ Ball disappeared!');
+                    clearInterval(checkCollision);
                     return;
                 }
                 
-                // Add physics
-                currentBall.setAttribute('dynamic-body', {
-                    shape: 'sphere',
-                    mass: 0.15,
-                    linearDamping: 0.05,
-                    angularDamping: 0.05
+                const ballPos = currentBall.object3D.position;
+                const goalZones = document.querySelectorAll('.goal-zone');
+                
+                goalZones.forEach(zone => {
+                    const zonePos = new THREE.Vector3();
+                    zone.object3D.getWorldPosition(zonePos);
+                    
+                    const distance = ballPos.distanceTo(zonePos);
+                    
+                    // If ball is close to goal zone (within radius)
+                    if (distance < 0.2) {
+                        clearInterval(checkCollision);
+                        const binType = zone.getAttribute('data-bin-type');
+                        console.log('🎯 GOAL! Scored in:', binType);
+                        
+                        updateScore(10);
+                        throwIndicator.textContent = '🎉 MASUK! +10 Poin!';
+                        throwIndicator.style.background = 'rgba(76, 175, 80, 0.9)';
+                        
+                        currentBall.setAttribute('color', '#4CAF50');
+                        
+                        setTimeout(() => {
+                            if (currentBall && currentBall.parentNode) {
+                                currentBall.parentNode.removeChild(currentBall);
+                            }
+                            currentBall = null;
+                            throwIndicator.textContent = '🎯 Siap melempar!';
+                            
+                            if (isMarkerVisible) {
+                                setTimeout(() => createPaperBall(), 500);
+                            }
+                        }, 1000);
+                    }
                 });
-                
-                // Wait for physics body to load
-                const checkPhysics = setInterval(() => {
-                    if (currentBall && currentBall.body) {
-                        clearInterval(checkPhysics);
-                        
-                        // Calculate throw direction
-                        const powerMultiplier = 0.005;
-                        const minForce = 1.5;
-                        const upwardForce = Math.max(minForce, velocity * powerMultiplier);
-                        
-                        // Forward direction based on camera
-                        const forwardVector = new THREE.Vector3(0, 0, -1);
-                        forwardVector.applyQuaternion(camera.object3D.quaternion);
-                        
-                        const throwPower = 3.0;
-                        const forceX = forwardVector.x * throwPower;
-                        const forceY = upwardForce + 1.5; // More upward
-                        const forceZ = forwardVector.z * throwPower;
-                        
-                        const impulse = new CANNON.Vec3(forceX, forceY, forceZ);
-                        const worldPoint = new CANNON.Vec3(0, 0, 0);
-                        
-                        currentBall.body.applyImpulse(impulse, worldPoint);
-                        console.log('🚀 Force applied! X:', forceX.toFixed(2), 'Y:', forceY.toFixed(2), 'Z:', forceZ.toFixed(2));
-                        
-                        // Add spin
-                        currentBall.body.angularVelocity.set(
-                            Math.random() * 6 - 3,
-                            Math.random() * 6 - 3,
-                            Math.random() * 6 - 3
-                        );
-                    }
-                }, 50);
-                
-                // Timeout after 1 second
-                setTimeout(() => {
-                    clearInterval(checkPhysics);
-                    if (!currentBall || !currentBall.body) {
-                        console.error('❌ Physics body failed to load!');
-                    }
-                }, 1000);
-                
-            }, 100);
+            }, 50);
             
-            // Collision detection
-            currentBall.addEventListener('collide', function(e) {
-                const collidedEl = e.detail.body.el;
-                
-                if (collidedEl && collidedEl.classList.contains('goal-zone')) {
-                    const binType = collidedEl.getAttribute('data-bin-type');
-                    console.log('🎯 GOAL! Scored in:', binType);
-                    
-                    updateScore(10);
-                    throwIndicator.textContent = '🎉 MASUK! +10 Poin!';
-                    throwIndicator.style.background = 'rgba(76, 175, 80, 0.9)';
-                    
-                    currentBall.setAttribute('color', '#4CAF50');
-                    
-                    setTimeout(() => {
-                        if (currentBall && currentBall.parentNode) {
-                            currentBall.parentNode.removeChild(currentBall);
-                        }
-                        currentBall = null;
-                        throwIndicator.textContent = '🎯 Siap melempar!';
-                        
-                        // Create new ball if marker still visible
-                        if (isMarkerVisible) {
-                            setTimeout(() => createPaperBall(), 500);
-                        }
-                    }, 1000);
-                } else {
-                    console.log('💥 Ball collided with:', collidedEl ? collidedEl.id : 'unknown');
-                }
-            });
-            
-            // Auto-remove and create new ball after 5 seconds
+            // Auto-remove after 3 seconds
             setTimeout(() => {
+                clearInterval(checkCollision);
                 if (currentBall && currentBall.parentNode) {
                     console.log('🗑️ Removing old ball');
                     currentBall.parentNode.removeChild(currentBall);
                     currentBall = null;
                     
-                    // Create new ball if marker still visible
                     if (isMarkerVisible) {
                         createPaperBall();
                     }
                 }
-            }, 5000);
+            }, 3000);
         }
         
         // Setup Drag Controls (Paper Toss style)
