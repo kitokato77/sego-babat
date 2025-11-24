@@ -5,17 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AR Paper Toss - Daur Ulang Sampah</title>
     
-    <!-- A-Frame Core (Versi stabil) -->
-    <script src="https://aframe.io/releases/1.0.4/aframe.min.js"></script>
+    <!-- A-Frame Core (Versi 1.4.2) -->
+    <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
     
     <!-- MindAR Image Tracking -->
     <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.2/dist/mindar-image-aframe.prod.js"></script>
-    
-    <!-- A-Frame Physics System (Kompatibel dengan 1.0.4) -->
-    <script src="https://cdn.jsdelivr.net/npm/aframe-physics-system@3.3.0/dist/aframe-physics-system.min.js"></script>
-    
-    <!-- CANNON.js Physics Engine -->
-    <script src="https://cdn.jsdelivr.net/npm/cannon@0.6.2/build/cannon.min.js"></script>
     
     <style>
         body {
@@ -91,6 +85,19 @@
         .hidden {
             display: none;
         }
+        
+        body.dragging {
+            cursor: grabbing !important;
+            cursor: -webkit-grabbing !important;
+        }
+        
+        #pokeball-cursor {
+            position: fixed;
+            pointer-events: none;
+            z-index: 2000;
+            transition: transform 0.05s ease-out;
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -99,18 +106,21 @@
         <div id="score-display">Skor: 0</div>
         <div id="instructions">
             📱 Arahkan kamera ke stiker target<br>
-            👆 Tap layar untuk melempar kertas<br>
+            👆 Swipe ke atas untuk lempar Pokéball<br>
             🎯 Masukkan ke tong yang sesuai!
         </div>
     </div>
     
     <div id="throw-indicator" class="hidden">
-        TAP untuk LEMPAR! 🎯
+        SWIPE untuk LEMPAR POKÉBALL! ⚪
     </div>
     
     <div id="drag-area" class="hidden">
-        <div id="drag-instruction">👆 DRAG KE ATAS untuk LEMPAR! 🎯</div>
+        <div id="drag-instruction">👆 SWIPE KE ATAS untuk LEMPAR POKÉBALL! ⚪</div>
     </div>
+    
+    <!-- Pokéball Cursor (for drag visual) -->
+    <div id="pokeball-cursor" style="width: 60px; height: 60px; border-radius: 50%; background: linear-gradient(180deg, #EE1515 50%, #FFFFFF 50%); border: 3px solid #1a1a1a; box-shadow: 0 4px 15px rgba(0,0,0,0.5);"></div>
 
     <!-- AR Scene -->
     <a-scene 
@@ -253,6 +263,10 @@
         scene.addEventListener('loaded', () => {
             console.log('✅ Scene loaded!');
             sceneReady = true;
+            
+            // Create Pokéball immediately (but invisible until marker found)
+            createPaperBall();
+            
             setupMarkerListeners();
             setupDragControls();
         });
@@ -279,31 +293,58 @@
             
             // Show/Hide controls when marker is detected
             marker.addEventListener('targetFound', event => {
-                console.log('✅ Marker detected!');
+                console.log('✅ Marker detected! Showing bins and Pokéball...');
                 isMarkerVisible = true;
                 dragArea.classList.remove('hidden');
                 throwIndicator.classList.remove('hidden');
-                throwIndicator.textContent = '🎯 Siap melempar!';
+                throwIndicator.textContent = '⚪ Pokéball siap!';
                 
-                // Create initial ball
-                if (!currentBall) {
-                    createPaperBall();
-                }
+                // Show or create Pokéball when marker is visible
+                showPokeball();
             });
             
             marker.addEventListener('targetLost', event => {
-                console.log('⚠️ Marker lost!');
+                console.log('⚠️ Marker lost! Hiding Pokéball...');
                 isMarkerVisible = false;
                 dragArea.classList.add('hidden');
                 throwIndicator.classList.add('hidden');
                 
-                // DON'T remove ball - it's attached to camera, not marker
+                // Hide Pokéball when marker is lost
+                hidePokeball();
+                
+                // Cancel any ongoing drag
+                if (isDragging) {
+                    isDragging = false;
+                    const pokeballCursor = document.getElementById('pokeball-cursor');
+                    if (pokeballCursor) {
+                        pokeballCursor.style.display = 'none';
+                    }
+                    document.body.classList.remove('dragging');
+                }
             });
         }
         
-        // Create Paper Ball (positioned at camera/screen, not marker!)
+        // Hide Pokéball
+        function hidePokeball() {
+            if (currentBall && currentBall.parentNode) {
+                currentBall.setAttribute('visible', 'false');
+                console.log('🚫 Pokéball hidden');
+            }
+        }
+        
+        // Show Pokéball
+        function showPokeball() {
+            if (currentBall && currentBall.parentNode) {
+                currentBall.setAttribute('visible', 'true');
+                console.log('✅ Pokéball visible');
+            } else if (!currentBall) {
+                createPaperBall();
+            }
+        }
+        
+        // Create Pokéball (positioned at camera/screen, not marker!)
         function createPaperBall() {
-            console.log('🎾 Creating paper ball at CAMERA...');
+            console.log('⚪ Creating Pokéball at CAMERA...');
             
             const scene = document.querySelector('a-scene');
             const camera = document.querySelector('a-camera');
@@ -313,40 +354,101 @@
                 return null;
             }
             
-            const ball = document.createElement('a-sphere');
+            // Create Pokéball using GLB model approach (simplified sphere with texture)
+            const ballContainer = document.createElement('a-entity');
+            ballContainer.setAttribute('position', '0 -0.2 -0.5');
+            ballContainer.setAttribute('id', 'active-ball');
+            ballContainer.classList.add('draggable-ball');
             
-            // Ball properties - NO PHYSICS, pure visual
-            ball.setAttribute('radius', '0.12');
-            ball.setAttribute('color', '#FFD700');
-            ball.setAttribute('shadow', 'cast: true');
-            ball.setAttribute('metalness', '0.5');
-            ball.setAttribute('roughness', '0.5');
-            ball.setAttribute('segments-height', '16');
-            ball.setAttribute('segments-width', '16');
-            ball.setAttribute('material', 'color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.5');
+            // Main sphere body
+            const mainBall = document.createElement('a-sphere');
+            mainBall.setAttribute('radius', '0.08');
+            mainBall.setAttribute('segments-height', '32');
+            mainBall.setAttribute('segments-width', '32');
+            mainBall.setAttribute('shadow', 'cast: true; receive: true');
             
-            // Position in front of camera
-            ball.setAttribute('position', '0 -0.15 -0.3');
+            // Create gradient-like effect with multiple layers
+            // Top hemisphere (Red)
+            const topHalf = document.createElement('a-sphere');
+            topHalf.setAttribute('radius', '0.081');
+            topHalf.setAttribute('color', '#EE1515');
+            topHalf.setAttribute('theta-start', '0');
+            topHalf.setAttribute('theta-length', '180');
+            topHalf.setAttribute('phi-start', '0');
+            topHalf.setAttribute('phi-length', '90');
+            topHalf.setAttribute('material', 'shader: flat; color: #EE1515; side: double');
             
-            ball.setAttribute('id', 'active-ball');
-            ball.classList.add('draggable-ball');
+            // Bottom hemisphere (White)
+            const bottomHalf = document.createElement('a-sphere');
+            bottomHalf.setAttribute('radius', '0.081');
+            bottomHalf.setAttribute('color', '#FFFFFF');
+            bottomHalf.setAttribute('theta-start', '0');
+            bottomHalf.setAttribute('theta-length', '180');
+            bottomHalf.setAttribute('phi-start', '90');
+            bottomHalf.setAttribute('phi-length', '90');
+            bottomHalf.setAttribute('material', 'shader: flat; color: #FFFFFF; side: double');
             
-            // Add to CAMERA - NO PHYSICS AT ALL
-            camera.appendChild(ball);
-            console.log('✅ Ball spawned (NO PHYSICS - pure animation)');
+            // Middle black stripe
+            const blackBand = document.createElement('a-cylinder');
+            blackBand.setAttribute('radius', '0.082');
+            blackBand.setAttribute('height', '0.02');
+            blackBand.setAttribute('color', '#1a1a1a');
+            blackBand.setAttribute('material', 'shader: flat; color: #1a1a1a');
+            blackBand.setAttribute('rotation', '90 0 0');
             
-            currentBall = ball;
-            return ball;
+            // Center button
+            const button = document.createElement('a-circle');
+            button.setAttribute('radius', '0.025');
+            button.setAttribute('color', '#FFFFFF');
+            button.setAttribute('position', '0 0 0.082');
+            button.setAttribute('material', 'shader: flat; color: #FFFFFF; opacity: 1');
+            
+            const buttonRing = document.createElement('a-ring');
+            buttonRing.setAttribute('radius-inner', '0.025');
+            buttonRing.setAttribute('radius-outer', '0.03');
+            buttonRing.setAttribute('color', '#1a1a1a');
+            buttonRing.setAttribute('position', '0 0 0.083');
+            buttonRing.setAttribute('material', 'shader: flat; color: #1a1a1a');
+            
+            // Assemble
+            ballContainer.appendChild(mainBall);
+            ballContainer.appendChild(topHalf);
+            ballContainer.appendChild(bottomHalf);
+            ballContainer.appendChild(blackBand);
+            ballContainer.appendChild(button);
+            ballContainer.appendChild(buttonRing);
+            
+            // Floating animation
+            ballContainer.setAttribute('animation', {
+                property: 'position',
+                from: '0 -0.2 -0.5',
+                to: '0 -0.17 -0.5',
+                dur: 1200,
+                easing: 'easeInOutSine',
+                loop: true,
+                dir: 'alternate'
+            });
+            
+            // Add to camera but make it invisible initially
+            ballContainer.setAttribute('visible', 'false');
+            camera.appendChild(ballContainer);
+            console.log('✅ Pokéball spawned (hidden, waiting for marker)');
+            
+            currentBall = ballContainer;
+            return ballContainer;
         }
         
-        // Throw ball with ANIMATION (no physics - simpler and works!)
-        function throwBall(velocity) {
+        // Throw Pokéball with ANIMATION (Pokémon GO style!)
+        function throwBall(velocity, deltaX = 0) {
             if (!currentBall || !currentBall.parentNode) {
                 console.log('⚠️ No ball to throw');
                 return;
             }
             
-            console.log('🚀 Throwing ball with velocity:', velocity.toFixed(2));
+            console.log('🚀 Throwing Pokéball - Velocity:', velocity.toFixed(2), 'DeltaX:', deltaX);
+            
+            // Stop floating animation
+            currentBall.removeAttribute('animation');
             
             // Get ball's current WORLD position
             const ballWorldPos = new THREE.Vector3();
@@ -354,7 +456,7 @@
             
             const camera = document.querySelector('a-camera');
             
-            console.log('📍 Ball world position:', ballWorldPos.x.toFixed(2), ballWorldPos.y.toFixed(2), ballWorldPos.z.toFixed(2));
+            console.log('📍 Pokéball world position:', ballWorldPos.x.toFixed(2), ballWorldPos.y.toFixed(2), ballWorldPos.z.toFixed(2));
             
             // Remove from camera
             const parent = currentBall.parentNode;
@@ -369,59 +471,83 @@
             // Set world position
             currentBall.object3D.position.copy(ballWorldPos);
             
-            // Calculate throw parameters
-            const powerMultiplier = 0.004;
-            const minPower = 1.5;
-            const power = Math.max(minPower, velocity * powerMultiplier);
+            // Calculate throw parameters (Pokémon GO style)
+            const powerMultiplier = 0.005;
+            const minPower = 1.8;
+            const maxPower = 3.5;
+            const power = Math.min(maxPower, Math.max(minPower, velocity * powerMultiplier));
             
             // Get forward direction
             const forwardVector = new THREE.Vector3(0, 0, -1);
             forwardVector.applyQuaternion(camera.object3D.quaternion);
             
-            // Calculate target position (parabolic arc)
-            const throwDistance = 2.5;
-            const throwHeight = power + 1.0;
+            // Calculate target position with horizontal offset (smooth parabolic arc)
+            const throwDistance = 2.2 + (power * 0.3);
+            const throwHeight = power * 0.8;
             
-            const targetX = ballWorldPos.x + (forwardVector.x * throwDistance);
-            const targetY = ballWorldPos.y + throwHeight;
+            // Apply horizontal offset from drag
+            const horizontalOffset = (deltaX / window.innerWidth) * 1.5;
+            
+            const targetX = ballWorldPos.x + (forwardVector.x * throwDistance) + horizontalOffset;
+            const targetY = ballWorldPos.y - 0.2;
             const targetZ = ballWorldPos.z + (forwardVector.z * throwDistance);
             
-            // Mid-point for arc (higher)
-            const midX = ballWorldPos.x + (forwardVector.x * throwDistance * 0.5);
-            const midY = ballWorldPos.y + throwHeight + 0.5;
-            const midZ = ballWorldPos.z + (forwardVector.z * throwDistance * 0.5);
+            // Peak point for smooth arc
+            const peakX = ballWorldPos.x + (forwardVector.x * throwDistance * 0.4) + (horizontalOffset * 0.5);
+            const peakY = ballWorldPos.y + throwHeight;
+            const peakZ = ballWorldPos.z + (forwardVector.z * throwDistance * 0.4);
             
-            console.log('🎯 Throw arc: Start', ballWorldPos.y.toFixed(2), '→ Peak', midY.toFixed(2), '→ Target', targetY.toFixed(2));
+            console.log('🎯 Pokéball arc: Start', ballWorldPos.y.toFixed(2), '→ Peak', peakY.toFixed(2), '→ Target', targetY.toFixed(2));
             
-            // Animate with keyframes (parabolic arc)
-            currentBall.setAttribute('animation__throw', {
+            // First phase: Rising arc (Pokémon GO style)
+            currentBall.setAttribute('animation__throw1', {
                 property: 'position',
-                to: `${targetX} ${targetY} ${targetZ}`,
-                dur: 1000,
-                easing: 'easeOutQuad'
+                to: `${peakX} ${peakY} ${peakZ}`,
+                dur: 600,
+                easing: 'easeOutCubic'
             });
             
-            // Add falling animation after peak
+            // Second phase: Falling arc
             setTimeout(() => {
                 if (currentBall && currentBall.parentNode) {
-                    currentBall.setAttribute('animation__fall', {
+                    currentBall.setAttribute('animation__throw2', {
                         property: 'position',
-                        to: `${targetX} ${targetY - 1.5} ${targetZ}`,
-                        dur: 500,
-                        easing: 'easeInQuad'
+                        to: `${targetX} ${targetY} ${targetZ}`,
+                        dur: 700,
+                        easing: 'easeInCubic'
                     });
                 }
-            }, 500);
+            }, 600);
             
-            // Add rotation for visual effect
-            currentBall.setAttribute('animation__rotate', {
+            // Spinning rotation (Pokéball spin)
+            currentBall.setAttribute('animation__spin', {
                 property: 'rotation',
-                to: '360 360 360',
-                dur: 1500,
+                to: '0 720 360',
+                dur: 1300,
                 easing: 'linear'
             });
             
-            console.log('✅ Ball animated with parabolic arc');
+            // Scale effect on throw (slight squeeze)
+            currentBall.setAttribute('animation__scale1', {
+                property: 'scale',
+                from: '1 1 1',
+                to: '1.1 1.1 1.1',
+                dur: 200,
+                easing: 'easeOutQuad'
+            });
+            
+            setTimeout(() => {
+                if (currentBall && currentBall.parentNode) {
+                    currentBall.setAttribute('animation__scale2', {
+                        property: 'scale',
+                        to: '1 1 1',
+                        dur: 1100,
+                        easing: 'easeInOutQuad'
+                    });
+                }
+            }, 200);
+            
+            console.log('✅ Pokéball launched with smooth parabolic arc!');
             
             // Check collision manually with goal zones
             const checkCollision = setInterval(() => {
@@ -446,17 +572,19 @@
                         console.log('🎯 GOAL! Scored in:', binType);
                         
                         updateScore(10);
-                        throwIndicator.textContent = '🎉 MASUK! +10 Poin!';
+                        throwIndicator.textContent = '🎉 GOTCHA! +10 Poin!';
                         throwIndicator.style.background = 'rgba(76, 175, 80, 0.9)';
                         
-                        currentBall.setAttribute('color', '#4CAF50');
+                        // Change Pokéball color to green on success
+                        const topHalf = currentBall.querySelector('a-sphere');
+                        if (topHalf) topHalf.setAttribute('color', '#4CAF50');
                         
                         setTimeout(() => {
                             if (currentBall && currentBall.parentNode) {
                                 currentBall.parentNode.removeChild(currentBall);
                             }
                             currentBall = null;
-                            throwIndicator.textContent = '🎯 Siap melempar!';
+                            throwIndicator.textContent = '⚪ Pokéball siap!';
                             
                             if (isMarkerVisible) {
                                 setTimeout(() => createPaperBall(), 500);
@@ -481,10 +609,14 @@
             }, 3000);
         }
         
-        // Setup Drag Controls (Paper Toss style)
+        // Setup Drag Controls (Pokémon GO style - drag anywhere!)
         function setupDragControls() {
             let touchStartY = 0;
+            let touchStartX = 0;
             let touchStartTime = 0;
+            let currentTouchX = 0;
+            let currentTouchY = 0;
+            const pokeballCursor = document.getElementById('pokeball-cursor');
             
             // Mouse events (desktop)
             document.addEventListener('mousedown', (e) => {
@@ -492,24 +624,50 @@
                 
                 isDragging = true;
                 dragStartY = e.clientY;
+                dragStartX = e.clientX;
                 dragStartTime = Date.now();
                 dragArea.classList.add('active');
+                document.body.classList.add('dragging');
                 
-                console.log('🖱️ Drag started at Y:', dragStartY);
+                // Show Pokéball cursor
+                pokeballCursor.style.display = 'block';
+                pokeballCursor.style.left = e.clientX - 30 + 'px';
+                pokeballCursor.style.top = e.clientY - 30 + 'px';
+                
+                console.log('🖱️ Drag started at:', dragStartX, dragStartY);
             });
             
             document.addEventListener('mousemove', (e) => {
                 if (!isDragging || !currentBall) return;
                 
-                const deltaY = dragStartY - e.clientY; // Positive = dragging up
+                currentTouchX = e.clientX;
+                currentTouchY = e.clientY;
+                
+                // Move Pokéball cursor to follow mouse
+                pokeballCursor.style.left = e.clientX - 30 + 'px';
+                pokeballCursor.style.top = e.clientY - 30 + 'px';
+                
+                const deltaY = dragStartY - e.clientY;
+                const deltaX = e.clientX - dragStartX;
+                
+                // Update Pokéball position in 3D space to follow cursor
+                if (currentBall && currentBall.parentNode) {
+                    const normalizedX = (deltaX / window.innerWidth) * 0.5;
+                    const normalizedY = (deltaY / window.innerHeight) * 0.3;
+                    
+                    currentBall.setAttribute('position', `${normalizedX} ${-0.2 + normalizedY} -0.5`);
+                }
                 
                 // Visual feedback
                 if (deltaY > 50) {
-                    throwIndicator.textContent = `⬆️ KUAT! (${Math.round(deltaY)}px)`;
+                    throwIndicator.textContent = `⬆️ LEMPARAN KUAT! 💪`;
+                    pokeballCursor.style.transform = 'scale(1.2)';
                 } else if (deltaY > 20) {
-                    throwIndicator.textContent = `↗️ Sedang (${Math.round(deltaY)}px)`;
+                    throwIndicator.textContent = `↗️ Lemparan Sedang ⚪`;
+                    pokeballCursor.style.transform = 'scale(1.1)';
                 } else {
-                    throwIndicator.textContent = '👆 Drag ke atas!';
+                    throwIndicator.textContent = '👆 Drag Pokéball!';
+                    pokeballCursor.style.transform = 'scale(1)';
                 }
             });
             
@@ -517,57 +675,95 @@
                 if (!isDragging) return;
                 
                 const deltaY = dragStartY - e.clientY;
+                const deltaX = e.clientX - dragStartX;
                 const deltaTime = Date.now() - dragStartTime;
-                const velocity = Math.abs((deltaY / deltaTime) * 1000); // pixels per second, absolute value
+                const velocity = Math.abs((deltaY / deltaTime) * 1000);
                 
-                console.log('🖱️ Drag released! ΔY:', deltaY, 'Time:', deltaTime, 'ms, Velocity:', velocity.toFixed(2), 'px/s');
+                console.log('🖱️ Released! ΔX:', deltaX, 'ΔY:', deltaY, 'Velocity:', velocity.toFixed(2));
                 
                 isDragging = false;
                 dragArea.classList.remove('active');
+                document.body.classList.remove('dragging');
+                pokeballCursor.style.display = 'none';
+                pokeballCursor.style.transform = 'scale(1)';
                 
-                // Check if we have a ball to throw
                 if (!currentBall) {
                     console.log('⚠️ No ball available');
                     return;
                 }
                 
-                // Only throw if dragged upward enough (at least 30px)
+                // Throw if dragged upward enough
                 if (deltaY > 30) {
-                    throwBall(velocity);
-                    throwIndicator.textContent = '🚀 MELEMPAR...';
+                    throwBall(velocity, deltaX);
+                    throwIndicator.textContent = '⚪ POKÉBALL TERBANG!';
                 } else {
-                    throwIndicator.textContent = '⚠️ Drag lebih tinggi! (min 30px)';
-                    console.log('⚠️ Drag too weak:', deltaY, 'px');
+                    // Reset position
+                    currentBall.setAttribute('position', '0 -0.2 -0.5');
+                    currentBall.setAttribute('animation', {
+                        property: 'position',
+                        from: '0 -0.2 -0.5',
+                        to: '0 -0.17 -0.5',
+                        dur: 1200,
+                        easing: 'easeInOutSine',
+                        loop: true,
+                        dir: 'alternate'
+                    });
+                    throwIndicator.textContent = '⚠️ Swipe lebih kuat!';
                     setTimeout(() => {
-                        throwIndicator.textContent = '🎯 Siap melempar!';
+                        throwIndicator.textContent = '⚪ Pokéball siap!';
                     }, 1500);
                 }
             });
             
-            // Touch events (mobile)
+            // Touch events (mobile - Pokémon GO style)
             document.addEventListener('touchstart', (e) => {
                 if (!isMarkerVisible || !currentBall) return;
                 
                 isDragging = true;
                 touchStartY = e.touches[0].clientY;
+                touchStartX = e.touches[0].clientX;
                 touchStartTime = Date.now();
                 dragArea.classList.add('active');
                 
-                console.log('📱 Touch drag started at Y:', touchStartY);
+                // Show Pokéball cursor
+                pokeballCursor.style.display = 'block';
+                pokeballCursor.style.left = touchStartX - 30 + 'px';
+                pokeballCursor.style.top = touchStartY - 30 + 'px';
+                
+                console.log('📱 Touch started at:', touchStartX, touchStartY);
             }, { passive: false });
             
             document.addEventListener('touchmove', (e) => {
                 if (!isDragging || !currentBall) return;
                 e.preventDefault();
                 
-                const deltaY = touchStartY - e.touches[0].clientY;
+                currentTouchX = e.touches[0].clientX;
+                currentTouchY = e.touches[0].clientY;
+                
+                // Move Pokéball cursor
+                pokeballCursor.style.left = currentTouchX - 30 + 'px';
+                pokeballCursor.style.top = currentTouchY - 30 + 'px';
+                
+                const deltaY = touchStartY - currentTouchY;
+                const deltaX = currentTouchX - touchStartX;
+                
+                // Update 3D Pokéball position
+                if (currentBall && currentBall.parentNode) {
+                    const normalizedX = (deltaX / window.innerWidth) * 0.5;
+                    const normalizedY = (deltaY / window.innerHeight) * 0.3;
+                    
+                    currentBall.setAttribute('position', `${normalizedX} ${-0.2 + normalizedY} -0.5`);
+                }
                 
                 if (deltaY > 50) {
-                    throwIndicator.textContent = `⬆️ KUAT! (${Math.round(deltaY)}px)`;
+                    throwIndicator.textContent = `⬆️ LEMPARAN KUAT! 💪`;
+                    pokeballCursor.style.transform = 'scale(1.2)';
                 } else if (deltaY > 20) {
-                    throwIndicator.textContent = `↗️ Sedang (${Math.round(deltaY)}px)`;
+                    throwIndicator.textContent = `↗️ Lemparan Sedang ⚪`;
+                    pokeballCursor.style.transform = 'scale(1.1)';
                 } else {
-                    throwIndicator.textContent = '👆 Drag ke atas!';
+                    throwIndicator.textContent = '👆 Drag Pokéball!';
+                    pokeballCursor.style.transform = 'scale(1)';
                 }
             }, { passive: false });
             
@@ -575,41 +771,54 @@
                 if (!isDragging) return;
                 
                 const touchEndY = e.changedTouches[0].clientY;
+                const touchEndX = e.changedTouches[0].clientX;
                 const deltaY = touchStartY - touchEndY;
+                const deltaX = touchEndX - touchStartX;
                 const deltaTime = Date.now() - touchStartTime;
                 const velocity = Math.abs((deltaY / deltaTime) * 1000);
                 
-                console.log('📱 Touch released! ΔY:', deltaY, 'Time:', deltaTime, 'ms, Velocity:', velocity.toFixed(2), 'px/s');
+                console.log('📱 Released! ΔX:', deltaX, 'ΔY:', deltaY, 'Velocity:', velocity.toFixed(2));
                 
                 isDragging = false;
                 dragArea.classList.remove('active');
+                pokeballCursor.style.display = 'none';
+                pokeballCursor.style.transform = 'scale(1)';
                 
-                // Check if we have a ball to throw
                 if (!currentBall) {
                     console.log('⚠️ No ball available');
                     return;
                 }
                 
                 if (deltaY > 30) {
-                    throwBall(velocity);
-                    throwIndicator.textContent = '🚀 MELEMPAR...';
+                    throwBall(velocity, deltaX);
+                    throwIndicator.textContent = '⚪ POKÉBALL TERBANG!';
                 } else {
-                    throwIndicator.textContent = '⚠️ Drag lebih tinggi! (min 30px)';
-                    console.log('⚠️ Touch drag too weak:', deltaY, 'px');
+                    // Reset position
+                    currentBall.setAttribute('position', '0 -0.2 -0.5');
+                    currentBall.setAttribute('animation', {
+                        property: 'position',
+                        from: '0 -0.2 -0.5',
+                        to: '0 -0.17 -0.5',
+                        dur: 1200,
+                        easing: 'easeInOutSine',
+                        loop: true,
+                        dir: 'alternate'
+                    });
+                    throwIndicator.textContent = '⚠️ Swipe lebih kuat!';
                     setTimeout(() => {
-                        throwIndicator.textContent = '🎯 Siap melempar!';
+                        throwIndicator.textContent = '⚪ Pokéball siap!';
                     }, 1500);
                 }
             }, { passive: false });
         }
         
         // Console instructions
-        console.log('%c🎯 AR Paper Toss Game Loaded!', 'color: #4CAF50; font-size: 20px; font-weight: bold;');
+        console.log('%c⚪ AR Pokéball Toss Game Loaded!', 'color: #EE1515; font-size: 20px; font-weight: bold;');
         console.log('%cControls:', 'color: #2196F3; font-size: 14px;');
         console.log('1. Point camera at marker');
-        console.log('2. DRAG ball upward to throw (like Paper Toss!)');
-        console.log('3. Drag faster = stronger throw');
-        console.log('%c📝 Drag & Release mechanic active!', 'color: #FF9800');
+        console.log('2. SWIPE Pokéball upward to throw (like Pokémon GO!)');
+        console.log('3. Swipe faster = stronger throw');
+        console.log('%c⚪ Pokéball mechanic active!', 'color: #FF9800');
     </script>
 </body>
 </html>
