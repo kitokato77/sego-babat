@@ -5,14 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AR Paper Toss - Daur Ulang Sampah</title>
     
-    <!-- A-Frame Core -->
-    <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+    <!-- A-Frame Core (Versi stabil) -->
+    <script src="https://aframe.io/releases/1.0.4/aframe.min.js"></script>
     
     <!-- MindAR Image Tracking -->
     <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.2/dist/mindar-image-aframe.prod.js"></script>
     
-    <!-- A-Frame Physics System -->
-    <script src="https://cdn.jsdelivr.net/gh/n5ro/aframe-physics-system@v4.0.1/dist/aframe-physics-system.min.js"></script>
+    <!-- A-Frame Physics System (Kompatibel dengan 1.0.4) -->
+    <script src="https://cdn.jsdelivr.net/npm/aframe-physics-system@3.3.0/dist/aframe-physics-system.min.js"></script>
+    
+    <!-- CANNON.js Physics Engine -->
+    <script src="https://cdn.jsdelivr.net/npm/cannon@0.6.2/build/cannon.min.js"></script>
     
     <style>
         body {
@@ -58,6 +61,33 @@
             z-index: 1000;
         }
         
+        #drag-area {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 40%;
+            background: linear-gradient(to top, rgba(76, 175, 80, 0.3), transparent);
+            border-top: 2px dashed rgba(76, 175, 80, 0.5);
+            z-index: 500;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+        }
+        
+        #drag-area.active {
+            background: linear-gradient(to top, rgba(255, 152, 0, 0.4), transparent);
+            border-top: 2px dashed rgba(255, 152, 0, 0.8);
+        }
+        
+        #drag-instruction {
+            font-size: 18px;
+            color: white;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            font-weight: bold;
+        }
+        
         .hidden {
             display: none;
         }
@@ -76,6 +106,10 @@
     
     <div id="throw-indicator" class="hidden">
         TAP untuk LEMPAR! 🎯
+    </div>
+    
+    <div id="drag-area" class="hidden">
+        <div id="drag-instruction">👆 DRAG KE ATAS untuk LEMPAR! 🎯</div>
     </div>
 
     <!-- AR Scene -->
@@ -207,13 +241,16 @@
         // Game State
         let score = 0;
         let isMarkerVisible = false;
-        let throwPower = 4.5; // Kekuatan lempar (lebih kuat)
-        let throwAngle = 45; // degrees (lebih tinggi)
         let sceneReady = false;
+        let currentBall = null;
+        let isDragging = false;
+        let dragStartY = 0;
+        let dragStartTime = 0;
         
         // DOM Elements
         const scoreDisplay = document.getElementById('score-display');
         const throwIndicator = document.getElementById('throw-indicator');
+        const dragArea = document.getElementById('drag-area');
         
         // Wait for scene to be ready
         const scene = document.querySelector('a-scene');
@@ -221,6 +258,7 @@
             console.log('✅ Scene loaded!');
             sceneReady = true;
             setupMarkerListeners();
+            setupDragControls();
         });
         
         // Update Score Display
@@ -243,170 +281,343 @@
                 return;
             }
             
-            // Show/Hide Throw Indicator when marker is detected
+            // Show/Hide controls when marker is detected
             marker.addEventListener('targetFound', event => {
                 console.log('✅ Marker detected!');
                 isMarkerVisible = true;
+                dragArea.classList.remove('hidden');
                 throwIndicator.classList.remove('hidden');
-                throwIndicator.textContent = 'TAP LAYAR untuk LEMPAR! 🎯';
-                throwIndicator.style.background = 'rgba(76, 175, 80, 0.9)';
+                throwIndicator.textContent = '🎯 Siap melempar!';
+                
+                // Create initial ball
+                if (!currentBall) {
+                    createPaperBall();
+                }
             });
             
             marker.addEventListener('targetLost', event => {
                 console.log('⚠️ Marker lost!');
                 isMarkerVisible = false;
+                dragArea.classList.add('hidden');
                 throwIndicator.classList.add('hidden');
+                
+                // DON'T remove ball - it's attached to camera, not marker
             });
         }
         
-        // Create Paper Ball with improved physics
+        // Create Paper Ball (positioned at camera/screen, not marker!)
         function createPaperBall() {
-            console.log('🎾 Creating paper ball...');
+            console.log('🎾 Creating paper ball at CAMERA...');
             
-            const marker = document.querySelector('#marker');
-            if (!marker) {
-                console.error('❌ Marker not found!');
-                return;
+            const scene = document.querySelector('a-scene');
+            const camera = document.querySelector('a-camera');
+            
+            if (!scene || !camera) {
+                console.error('❌ Scene or camera not found!');
+                return null;
             }
             
             const ball = document.createElement('a-sphere');
             
-            // Set ball properties - positioned relative to marker
-            ball.setAttribute('radius', '0.05');
-            ball.setAttribute('color', '#f4f4f4');
+            // Ball properties - BIGGER and BRIGHTER untuk terlihat jelas
+            ball.setAttribute('radius', '0.12'); // Lebih besar lagi
+            ball.setAttribute('color', '#FFD700'); // Gold/kuning terang
             ball.setAttribute('shadow', 'cast: true');
-            ball.setAttribute('metalness', '0.2');
-            ball.setAttribute('roughness', '0.8');
+            ball.setAttribute('metalness', '0.5');
+            ball.setAttribute('roughness', '0.5');
+            ball.setAttribute('segments-height', '16');
+            ball.setAttribute('segments-width', '16');
             
-            // Start position JAUH di depan user, rendah (bawah layar)
-            // Agar terlihat seperti melempar dari tangan
-            ball.setAttribute('position', '0 -0.3 -0.8');
+            // Add glow effect
+            ball.setAttribute('material', 'color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.5');
             
-            // Add physics body
-            ball.setAttribute('dynamic-body', {
-                shape: 'sphere',
-                mass: 0.2,
-                linearDamping: 0.01,
-                angularDamping: 0.01
-            });
+            // PENTING: Posisi di DEPAN KAMERA - lebih dekat dan lebih bawah
+            // x: 0 (tengah horizontal)
+            // y: -0.15 (sedikit di bawah center)
+            // z: -0.3 (sangat dekat ke kamera agar terlihat)
+            ball.setAttribute('position', '0 -0.15 -0.3');
             
-            // Add to marker
-            marker.appendChild(ball);
-            console.log('✅ Ball added to scene at position: 0, -0.3, -0.8');
+            // NO physics initially
+            ball.setAttribute('id', 'active-ball');
+            ball.classList.add('draggable-ball');
             
-            // Visual feedback
-            throwIndicator.textContent = 'LEMPAR! 🚀';
-            throwIndicator.style.background = 'rgba(255, 152, 0, 0.9)';
+            // Add to CAMERA
+            camera.appendChild(ball);
+            console.log('✅ Ball spawned at CAMERA position (0, -0.15, -0.3)');
+            console.log('🎨 Ball color: GOLD with glow effect');
+            console.log('📏 Ball radius: 0.12 (large and visible)');
+            
+            currentBall = ball;
+            return ball;
+        }
+        
+        // Throw ball with physics
+        function throwBall(velocity) {
+            if (!currentBall || !currentBall.parentNode) {
+                console.log('⚠️ No ball to throw');
+                return;
+            }
+            
+            console.log('🚀 Throwing ball with velocity:', velocity.toFixed(2));
+            
+            // Get ball's current WORLD position before moving
+            const ballWorldPos = new THREE.Vector3();
+            currentBall.object3D.getWorldPosition(ballWorldPos);
+            
+            // Get camera rotation to calculate throw direction
+            const camera = document.querySelector('a-camera');
+            const cameraRot = camera.object3D.rotation;
+            
+            console.log('📍 Ball world position:', ballWorldPos.x.toFixed(2), ballWorldPos.y.toFixed(2), ballWorldPos.z.toFixed(2));
+            
+            // Remove from camera safely
+            const parent = currentBall.parentNode;
+            if (parent) {
+                parent.removeChild(currentBall);
+            }
+            
+            // Add to scene
+            const scene = document.querySelector('a-scene');
+            scene.appendChild(currentBall);
+            
+            // Set world position
+            currentBall.object3D.position.copy(ballWorldPos);
+            
+            // Wait a bit for object to be in scene, then add physics
             setTimeout(() => {
-                throwIndicator.textContent = 'TAP untuk LEMPAR LAGI! 🎯';
-                throwIndicator.style.background = 'rgba(76, 175, 80, 0.9)';
-            }, 500);
-            
-            // Apply throw force after physics body is loaded
-            ball.addEventListener('body-loaded', function() {
-                console.log('⚙️ Physics body loaded');
-                setTimeout(() => {
-                    if (ball.body) {
-                        // Lemparan parabolik ke arah tong (forward + upward)
-                        const forceX = (Math.random() - 0.5) * 0.5; // Sedikit variasi horizontal
-                        const forceY = throwPower * 0.8; // Ke atas
-                        const forceZ = throwPower * 1.2; // Ke depan (positif karena tong di depan)
+                if (!currentBall || !currentBall.parentNode) {
+                    console.error('❌ Ball disappeared!');
+                    return;
+                }
+                
+                // Add physics
+                currentBall.setAttribute('dynamic-body', {
+                    shape: 'sphere',
+                    mass: 0.15,
+                    linearDamping: 0.05,
+                    angularDamping: 0.05
+                });
+                
+                // Wait for physics body to load
+                const checkPhysics = setInterval(() => {
+                    if (currentBall && currentBall.body) {
+                        clearInterval(checkPhysics);
+                        
+                        // Calculate throw direction
+                        const powerMultiplier = 0.005;
+                        const minForce = 1.5;
+                        const upwardForce = Math.max(minForce, velocity * powerMultiplier);
+                        
+                        // Forward direction based on camera
+                        const forwardVector = new THREE.Vector3(0, 0, -1);
+                        forwardVector.applyQuaternion(camera.object3D.quaternion);
+                        
+                        const throwPower = 3.0;
+                        const forceX = forwardVector.x * throwPower;
+                        const forceY = upwardForce + 1.5; // More upward
+                        const forceZ = forwardVector.z * throwPower;
                         
                         const impulse = new CANNON.Vec3(forceX, forceY, forceZ);
                         const worldPoint = new CANNON.Vec3(0, 0, 0);
                         
-                        ball.body.applyImpulse(impulse, worldPoint);
-                        console.log('🚀 Ball thrown! Force:', forceX.toFixed(2), forceY.toFixed(2), forceZ.toFixed(2));
+                        currentBall.body.applyImpulse(impulse, worldPoint);
+                        console.log('🚀 Force applied! X:', forceX.toFixed(2), 'Y:', forceY.toFixed(2), 'Z:', forceZ.toFixed(2));
                         
-                        // Add realistic spin
-                        ball.body.angularVelocity.set(
-                            Math.random() * 8 - 4,
-                            Math.random() * 8 - 4,
-                            Math.random() * 8 - 4
+                        // Add spin
+                        currentBall.body.angularVelocity.set(
+                            Math.random() * 6 - 3,
+                            Math.random() * 6 - 3,
+                            Math.random() * 6 - 3
                         );
                     }
                 }, 50);
-            });
+                
+                // Timeout after 1 second
+                setTimeout(() => {
+                    clearInterval(checkPhysics);
+                    if (!currentBall || !currentBall.body) {
+                        console.error('❌ Physics body failed to load!');
+                    }
+                }, 1000);
+                
+            }, 100);
             
             // Collision detection
-            ball.addEventListener('collide', function(e) {
+            currentBall.addEventListener('collide', function(e) {
                 const collidedEl = e.detail.body.el;
                 
-                // Check if ball hit a goal zone
                 if (collidedEl && collidedEl.classList.contains('goal-zone')) {
                     const binType = collidedEl.getAttribute('data-bin-type');
                     console.log('🎯 GOAL! Scored in:', binType);
                     
-                    // Award points
                     updateScore(10);
-                    
-                    // Visual feedback
                     throwIndicator.textContent = '🎉 MASUK! +10 Poin!';
                     throwIndicator.style.background = 'rgba(76, 175, 80, 0.9)';
                     
-                    // Change ball color
-                    ball.setAttribute('color', '#4CAF50');
+                    currentBall.setAttribute('color', '#4CAF50');
                     
-                    // Remove ball after scoring
                     setTimeout(() => {
-                        if (ball.parentNode) {
-                            ball.parentNode.removeChild(ball);
+                        if (currentBall && currentBall.parentNode) {
+                            currentBall.parentNode.removeChild(currentBall);
                         }
-                        throwIndicator.textContent = 'TAP untuk LEMPAR LAGI! 🎯';
+                        currentBall = null;
+                        throwIndicator.textContent = '🎯 Siap melempar!';
+                        
+                        // Create new ball if marker still visible
+                        if (isMarkerVisible) {
+                            setTimeout(() => createPaperBall(), 500);
+                        }
                     }, 1000);
                 } else {
                     console.log('💥 Ball collided with:', collidedEl ? collidedEl.id : 'unknown');
                 }
             });
             
-            // Auto-remove ball after 5 seconds to prevent clutter
+            // Auto-remove and create new ball after 5 seconds
             setTimeout(() => {
-                if (ball.parentNode) {
+                if (currentBall && currentBall.parentNode) {
                     console.log('🗑️ Removing old ball');
-                    ball.parentNode.removeChild(ball);
+                    currentBall.parentNode.removeChild(currentBall);
+                    currentBall = null;
+                    
+                    // Create new ball if marker still visible
+                    if (isMarkerVisible) {
+                        createPaperBall();
+                    }
                 }
             }, 5000);
         }
         
-        // Main throw handler
-        function handleThrow(event) {
-            console.log('👆 Screen tapped/clicked');
+        // Setup Drag Controls (Paper Toss style)
+        function setupDragControls() {
+            let touchStartY = 0;
+            let touchStartTime = 0;
             
-            if (!sceneReady) {
-                console.log('⏳ Scene not ready yet...');
-                return;
-            }
+            // Mouse events (desktop)
+            document.addEventListener('mousedown', (e) => {
+                if (!isMarkerVisible || !currentBall) return;
+                
+                isDragging = true;
+                dragStartY = e.clientY;
+                dragStartTime = Date.now();
+                dragArea.classList.add('active');
+                
+                console.log('🖱️ Drag started at Y:', dragStartY);
+            });
             
-            if (!isMarkerVisible) {
-                console.log('⚠️ Marker not visible, cannot throw!');
-                throwIndicator.classList.remove('hidden');
-                throwIndicator.textContent = '⚠️ Arahkan ke MARKER dulu!';
-                throwIndicator.style.background = 'rgba(244, 67, 54, 0.9)';
-                setTimeout(() => {
-                    throwIndicator.classList.add('hidden');
-                }, 2000);
-                return;
-            }
+            document.addEventListener('mousemove', (e) => {
+                if (!isDragging || !currentBall) return;
+                
+                const deltaY = dragStartY - e.clientY; // Positive = dragging up
+                
+                // Visual feedback
+                if (deltaY > 50) {
+                    throwIndicator.textContent = `⬆️ KUAT! (${Math.round(deltaY)}px)`;
+                } else if (deltaY > 20) {
+                    throwIndicator.textContent = `↗️ Sedang (${Math.round(deltaY)}px)`;
+                } else {
+                    throwIndicator.textContent = '👆 Drag ke atas!';
+                }
+            });
             
-            createPaperBall();
+            document.addEventListener('mouseup', (e) => {
+                if (!isDragging) return;
+                
+                const deltaY = dragStartY - e.clientY;
+                const deltaTime = Date.now() - dragStartTime;
+                const velocity = Math.abs((deltaY / deltaTime) * 1000); // pixels per second, absolute value
+                
+                console.log('🖱️ Drag released! ΔY:', deltaY, 'Time:', deltaTime, 'ms, Velocity:', velocity.toFixed(2), 'px/s');
+                
+                isDragging = false;
+                dragArea.classList.remove('active');
+                
+                // Check if we have a ball to throw
+                if (!currentBall) {
+                    console.log('⚠️ No ball available');
+                    return;
+                }
+                
+                // Only throw if dragged upward enough (at least 30px)
+                if (deltaY > 30) {
+                    throwBall(velocity);
+                    throwIndicator.textContent = '🚀 MELEMPAR...';
+                } else {
+                    throwIndicator.textContent = '⚠️ Drag lebih tinggi! (min 30px)';
+                    console.log('⚠️ Drag too weak:', deltaY, 'px');
+                    setTimeout(() => {
+                        throwIndicator.textContent = '🎯 Siap melempar!';
+                    }, 1500);
+                }
+            });
+            
+            // Touch events (mobile)
+            document.addEventListener('touchstart', (e) => {
+                if (!isMarkerVisible || !currentBall) return;
+                
+                isDragging = true;
+                touchStartY = e.touches[0].clientY;
+                touchStartTime = Date.now();
+                dragArea.classList.add('active');
+                
+                console.log('📱 Touch drag started at Y:', touchStartY);
+            }, { passive: false });
+            
+            document.addEventListener('touchmove', (e) => {
+                if (!isDragging || !currentBall) return;
+                e.preventDefault();
+                
+                const deltaY = touchStartY - e.touches[0].clientY;
+                
+                if (deltaY > 50) {
+                    throwIndicator.textContent = `⬆️ KUAT! (${Math.round(deltaY)}px)`;
+                } else if (deltaY > 20) {
+                    throwIndicator.textContent = `↗️ Sedang (${Math.round(deltaY)}px)`;
+                } else {
+                    throwIndicator.textContent = '👆 Drag ke atas!';
+                }
+            }, { passive: false });
+            
+            document.addEventListener('touchend', (e) => {
+                if (!isDragging) return;
+                
+                const touchEndY = e.changedTouches[0].clientY;
+                const deltaY = touchStartY - touchEndY;
+                const deltaTime = Date.now() - touchStartTime;
+                const velocity = Math.abs((deltaY / deltaTime) * 1000);
+                
+                console.log('📱 Touch released! ΔY:', deltaY, 'Time:', deltaTime, 'ms, Velocity:', velocity.toFixed(2), 'px/s');
+                
+                isDragging = false;
+                dragArea.classList.remove('active');
+                
+                // Check if we have a ball to throw
+                if (!currentBall) {
+                    console.log('⚠️ No ball available');
+                    return;
+                }
+                
+                if (deltaY > 30) {
+                    throwBall(velocity);
+                    throwIndicator.textContent = '🚀 MELEMPAR...';
+                } else {
+                    throwIndicator.textContent = '⚠️ Drag lebih tinggi! (min 30px)';
+                    console.log('⚠️ Touch drag too weak:', deltaY, 'px');
+                    setTimeout(() => {
+                        throwIndicator.textContent = '🎯 Siap melempar!';
+                    }, 1500);
+                }
+            }, { passive: false });
         }
-        
-        // Click event for desktop
-        document.addEventListener('click', handleThrow);
-        
-        // Touch event for mobile
-        document.addEventListener('touchstart', (event) => {
-            event.preventDefault();
-            handleThrow(event);
-        }, { passive: false });
         
         // Console instructions
         console.log('%c🎯 AR Paper Toss Game Loaded!', 'color: #4CAF50; font-size: 20px; font-weight: bold;');
-        console.log('%cInstructions:', 'color: #2196F3; font-size: 14px;');
-        console.log('1. Point camera at the target marker/sticker');
-        console.log('2. Tap screen to throw paper ball');
-        console.log('3. Score points by landing in bins!');
-        console.log('%c📝 Debug mode: Check console for throwing feedback', 'color: #FF9800');
+        console.log('%cControls:', 'color: #2196F3; font-size: 14px;');
+        console.log('1. Point camera at marker');
+        console.log('2. DRAG ball upward to throw (like Paper Toss!)');
+        console.log('3. Drag faster = stronger throw');
+        console.log('%c📝 Drag & Release mechanic active!', 'color: #FF9800');
     </script>
 </body>
+</html>
 </html>
